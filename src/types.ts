@@ -46,6 +46,14 @@ export interface ComponentSettings {
   alignment: 'left' | 'center' | 'right';
 }
 
+export interface SavedDocument {
+  id: string;
+  title: string;
+  date: string;
+  type: 'quotation' | 'handover';
+  data: QuotationData;
+}
+
 export interface QuotationData {
   businessInfo: BusinessInfo;
   customerName: string;

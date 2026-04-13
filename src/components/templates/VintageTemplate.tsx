@@ -139,11 +139,11 @@ export const VintageTemplate: React.FC<TemplateProps> = ({
               const newLayout = currentLayout.map(row => {
                 if (row.id === rowId) {
                   const newCols = [...row.columns];
-                  newCols[colIdx] = 'empty';
+                  newCols.splice(colIdx, 1);
                   return { ...row, columns: newCols };
                 }
                 return row;
-              });
+              }).filter(row => row.columns.length > 0);
               onLayoutChange?.(newLayout);
             }}
             className="p-1 hover:bg-red-100 rounded text-red-600"

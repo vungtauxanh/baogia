@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings } from './types';
 import { ClassicTemplate } from './components/templates/ClassicTemplate';
@@ -224,6 +224,9 @@ export default function App() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(true);
   const [isTemplateSelectionOpen, setIsTemplateSelectionOpen] = useState(true);
+  const [currentView, setCurrentView] = useState<'editor' | 'management'>('editor');
+  const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
+  const [savedDocuments, setSavedDocuments] = useState<SavedDocument[]>([]);
   const [fontFamily, setFontFamily] = useState('Inter');
   const [layout, setLayout] = useState<LayoutRow[]>([
     { id: 'row1', columns: ['business'], spacing: 20 },
@@ -329,6 +332,17 @@ export default function App() {
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('savedDocuments');
+    if (saved) {
+      try {
+        setSavedDocuments(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to parse saved documents', e);
+      }
+    }
+  }, []);
 
   const handleSaveData = () => {
     const dataToSave = {
@@ -561,7 +575,142 @@ export default function App() {
     componentSettings
   };
 
+  const saveToManagement = () => {
+    const docId = currentDocumentId || Date.now().toString();
+    const newDoc: SavedDocument = {
+      id: docId,
+      title: customerName ? `${isHandoverMode ? 'Biên bản bàn giao' : 'Báo giá'} - ${customerName}` : 'Chưa có tên',
+      date: quoteDate || new Date().toLocaleDateString('vi-VN'),
+      type: isHandoverMode ? 'handover' : 'quotation',
+      data: quotationData
+    };
+    
+    let updatedDocs;
+    if (currentDocumentId) {
+      updatedDocs = savedDocuments.map(doc => doc.id === docId ? newDoc : doc);
+    } else {
+      updatedDocs = [...savedDocuments, newDoc];
+      setCurrentDocumentId(docId);
+    }
+    
+    setSavedDocuments(updatedDocs);
+    localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
+    alert('Đã lưu vào trang quản lý!');
+  };
+
   const SelectedTemplate = TEMPLATES.find(t => t.id === selectedTemplateId)?.component || ClassicTemplate;
+
+  if (currentView === 'management') {
+    return (
+      <div className="min-h-screen bg-gray-100 p-8 font-sans">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+              <FileText className="text-blue-600" size={32} />
+              Quản lý Báo giá & Biên bản
+            </h1>
+            <button
+              onClick={() => {
+                setCurrentDocumentId(null);
+                setCurrentView('editor');
+              }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm"
+            >
+              <Plus size={20} />
+              Tạo mới
+            </button>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            {savedDocuments.length === 0 ? (
+              <div className="p-12 text-center text-gray-500">
+                <FileText size={48} className="mx-auto mb-4 text-gray-300" />
+                <p className="text-lg">Chưa có tài liệu nào được lưu.</p>
+                <button
+                  onClick={() => setCurrentView('editor')}
+                  className="mt-4 text-blue-600 hover:underline font-medium"
+                >
+                  Tạo tài liệu đầu tiên
+                </button>
+              </div>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm uppercase tracking-wider">
+                    <th className="p-4 font-medium">Tên tài liệu</th>
+                    <th className="p-4 font-medium">Loại</th>
+                    <th className="p-4 font-medium">Ngày tạo</th>
+                    <th className="p-4 font-medium text-right">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {savedDocuments.map((doc) => (
+                    <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="p-4 font-medium text-gray-800">{doc.title}</td>
+                      <td className="p-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                          doc.type === 'quotation' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+                        }`}>
+                          {doc.type === 'quotation' ? 'Báo giá' : 'Biên bản bàn giao'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-gray-600">{doc.date}</td>
+                      <td className="p-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => {
+                              const data = doc.data;
+                              if (data.businessInfo) setBusinessInfo(data.businessInfo);
+                              if (data.customerName !== undefined) setCustomerName(data.customerName);
+                              if (data.customerAddress !== undefined) setCustomerAddress(data.customerAddress);
+                              if (data.customerRepresentative !== undefined) setCustomerRepresentative(data.customerRepresentative);
+                              if (data.customerPosition !== undefined) setCustomerPosition(data.customerPosition);
+                              if (data.isHandoverMode !== undefined) setIsHandoverMode(data.isHandoverMode);
+                              if (data.quoteDate) setQuoteDate(data.quoteDate);
+                              if (data.items) setItems(data.items);
+                              if (data.vatOption) setVatOption(data.vatOption);
+                              if (data.customVatRate !== undefined) setCustomVatRate(data.customVatRate);
+                              if (data.columnWidths) setColumnWidths(data.columnWidths);
+                              if (data.sectionColumns) setSectionColumns(data.sectionColumns);
+                              if (data.layout) setLayout(data.layout);
+                              if (data.componentSettings) setComponentSettings(data.componentSettings);
+                              if (data.paperSize) setPaperSize(data.paperSize);
+                              if (data.printOrientation) setPrintOrientation(data.printOrientation);
+                              if (data.margins) setMargins(data.margins);
+                              if (data.rowSpacing) setRowSpacing(data.rowSpacing);
+                              setCurrentDocumentId(doc.id);
+                              setCurrentView('editor');
+                            }}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="Xem / Sửa"
+                          >
+                            <FileText size={18} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
+                                const updatedDocs = savedDocuments.filter(d => d.id !== doc.id);
+                                setSavedDocuments(updatedDocs);
+                                localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
+                              }
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Xóa"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col lg:flex-row h-screen bg-gray-100 font-sans">
@@ -573,6 +722,23 @@ export default function App() {
             <h1 className="font-bold text-lg">Tạo Báo Giá</h1>
           </div>
           <div className="flex gap-1 flex-wrap">
+            <button
+              onClick={() => setCurrentView('management')}
+              className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1 bg-blue-800"
+              title="Quản lý tài liệu"
+            >
+              <FileText size={18} />
+              <span className="hidden sm:inline text-sm font-medium">Quản lý</span>
+            </button>
+            <button
+              onClick={saveToManagement}
+              className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1 bg-blue-800"
+              title="Lưu vào quản lý"
+            >
+              <Save size={18} />
+              <span className="hidden sm:inline text-sm font-medium">Lưu</span>
+            </button>
+            <div className="w-px h-8 bg-blue-400 mx-1 hidden sm:block"></div>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1"
