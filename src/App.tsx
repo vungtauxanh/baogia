@@ -227,6 +227,11 @@ export default function App() {
   const [currentView, setCurrentView] = useState<'editor' | 'management'>('editor');
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const [savedDocuments, setSavedDocuments] = useState<SavedDocument[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [saveFolderId, setSaveFolderId] = useState<string | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   const [fontFamily, setFontFamily] = useState('Inter');
   const [layout, setLayout] = useState<LayoutRow[]>([
     { id: 'row1', columns: ['business'], spacing: 20 },
@@ -340,6 +345,14 @@ export default function App() {
         setSavedDocuments(JSON.parse(saved));
       } catch (e) {
         console.error('Failed to parse saved documents', e);
+      }
+    }
+    const savedFolders = localStorage.getItem('folders');
+    if (savedFolders) {
+      try {
+        setFolders(JSON.parse(savedFolders));
+      } catch (e) {
+        console.error('Failed to parse folders', e);
       }
     }
   }, []);
@@ -577,11 +590,13 @@ export default function App() {
 
   const saveToManagement = () => {
     const docId = currentDocumentId || Date.now().toString();
+    const docTitle = `${businessInfo.name} - ${customerName || 'Khách hàng mới'}`;
     const newDoc: SavedDocument = {
       id: docId,
-      title: customerName ? `${isHandoverMode ? 'Biên bản bàn giao' : 'Báo giá'} - ${customerName}` : 'Chưa có tên',
+      title: docTitle,
       date: quoteDate || new Date().toLocaleDateString('vi-VN'),
       type: isHandoverMode ? 'handover' : 'quotation',
+      folderId: saveFolderId || undefined,
       data: quotationData
     };
     
@@ -595,15 +610,41 @@ export default function App() {
     
     setSavedDocuments(updatedDocs);
     localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
+    setShowSaveModal(false);
     alert('Đã lưu vào trang quản lý!');
   };
 
   const SelectedTemplate = TEMPLATES.find(t => t.id === selectedTemplateId)?.component || ClassicTemplate;
 
   if (currentView === 'management') {
+    const filteredDocs = savedDocuments.filter(doc => {
+      const matchesSearch = doc.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesFolder = selectedFolderId ? doc.folderId === selectedFolderId : true;
+      return matchesSearch && matchesFolder;
+    });
+
+    const handleCreateFolder = () => {
+      const name = window.prompt('Nhập tên thư mục mới:');
+      if (name) {
+        const newFolder: Folder = { id: Date.now().toString(), name };
+        const updatedFolders = [...folders, newFolder];
+        setFolders(updatedFolders);
+        localStorage.setItem('folders', JSON.stringify(updatedFolders));
+      }
+    };
+
+    const handleDeleteFolder = (id: string) => {
+      if (window.confirm('Bạn có chắc chắn muốn xóa thư mục này? Các tài liệu bên trong sẽ không bị xóa.')) {
+        const updatedFolders = folders.filter(f => f.id !== id);
+        setFolders(updatedFolders);
+        localStorage.setItem('folders', JSON.stringify(updatedFolders));
+        if (selectedFolderId === id) setSelectedFolderId(null);
+      }
+    };
+
     return (
       <div className="min-h-screen bg-gray-100 p-8 font-sans">
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
               <FileText className="text-blue-600" size={32} />
@@ -621,91 +662,144 @@ export default function App() {
             </button>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            {savedDocuments.length === 0 ? (
-              <div className="p-12 text-center text-gray-500">
-                <FileText size={48} className="mx-auto mb-4 text-gray-300" />
-                <p className="text-lg">Chưa có tài liệu nào được lưu.</p>
-                <button
-                  onClick={() => setCurrentView('editor')}
-                  className="mt-4 text-blue-600 hover:underline font-medium"
-                >
-                  Tạo tài liệu đầu tiên
-                </button>
-              </div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm uppercase tracking-wider">
-                    <th className="p-4 font-medium">Tên tài liệu</th>
-                    <th className="p-4 font-medium">Loại</th>
-                    <th className="p-4 font-medium">Ngày tạo</th>
-                    <th className="p-4 font-medium text-right">Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {savedDocuments.map((doc) => (
-                    <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-4 font-medium text-gray-800">{doc.title}</td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                          doc.type === 'quotation' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
-                        }`}>
-                          {doc.type === 'quotation' ? 'Báo giá' : 'Biên bản bàn giao'}
-                        </span>
-                      </td>
-                      <td className="p-4 text-gray-600">{doc.date}</td>
-                      <td className="p-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => {
-                              const data = doc.data;
-                              if (data.businessInfo) setBusinessInfo(data.businessInfo);
-                              if (data.customerName !== undefined) setCustomerName(data.customerName);
-                              if (data.customerAddress !== undefined) setCustomerAddress(data.customerAddress);
-                              if (data.customerRepresentative !== undefined) setCustomerRepresentative(data.customerRepresentative);
-                              if (data.customerPosition !== undefined) setCustomerPosition(data.customerPosition);
-                              if (data.isHandoverMode !== undefined) setIsHandoverMode(data.isHandoverMode);
-                              if (data.quoteDate) setQuoteDate(data.quoteDate);
-                              if (data.items) setItems(data.items);
-                              if (data.vatOption) setVatOption(data.vatOption);
-                              if (data.customVatRate !== undefined) setCustomVatRate(data.customVatRate);
-                              if (data.columnWidths) setColumnWidths(data.columnWidths);
-                              if (data.sectionColumns) setSectionColumns(data.sectionColumns);
-                              if (data.layout) setLayout(data.layout);
-                              if (data.componentSettings) setComponentSettings(data.componentSettings);
-                              if (data.paperSize) setPaperSize(data.paperSize);
-                              if (data.printOrientation) setPrintOrientation(data.printOrientation);
-                              if (data.margins) setMargins(data.margins);
-                              if (data.rowSpacing) setRowSpacing(data.rowSpacing);
-                              setCurrentDocumentId(doc.id);
-                              setCurrentView('editor');
-                            }}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="Xem / Sửa"
-                          >
-                            <FileText size={18} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
-                                const updatedDocs = savedDocuments.filter(d => d.id !== doc.id);
-                                setSavedDocuments(updatedDocs);
-                                localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
-                              }
-                            }}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Xóa"
-                          >
-                            <X size={18} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+          <div className="flex flex-col md:flex-row gap-6">
+            {/* Sidebar: Folders */}
+            <div className="w-full md:w-64 flex-shrink-0">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="font-bold text-gray-700">Thư mục</h2>
+                  <button onClick={handleCreateFolder} className="text-blue-600 hover:bg-blue-50 p-1 rounded">
+                    <Plus size={18} />
+                  </button>
+                </div>
+                <ul className="space-y-1">
+                  <li>
+                    <button
+                      onClick={() => setSelectedFolderId(null)}
+                      className={`w-full text-left px-3 py-2 rounded-lg transition-colors ${!selectedFolderId ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      Tất cả tài liệu
+                    </button>
+                  </li>
+                  {folders.map(folder => (
+                    <li key={folder.id} className="flex items-center group">
+                      <button
+                        onClick={() => setSelectedFolderId(folder.id)}
+                        className={`flex-1 text-left px-3 py-2 rounded-lg transition-colors truncate ${selectedFolderId === folder.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+                      >
+                        {folder.name}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFolder(folder.id)}
+                        className="p-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Xóa thư mục"
+                      >
+                        <X size={14} />
+                      </button>
+                    </li>
                   ))}
-                </tbody>
-              </table>
-            )}
+                </ul>
+              </div>
+            </div>
+
+            {/* Main Content: Document List */}
+            <div className="flex-1">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="p-4 border-b border-gray-200 bg-gray-50">
+                  <input
+                    type="text"
+                    placeholder="Tìm kiếm tài liệu..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                
+                {filteredDocs.length === 0 ? (
+                  <div className="p-12 text-center text-gray-500">
+                    <FileText size={48} className="mx-auto mb-4 text-gray-300" />
+                    <p className="text-lg">Không tìm thấy tài liệu nào.</p>
+                  </div>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-sm uppercase tracking-wider">
+                        <th className="p-4 font-medium">Tên tài liệu</th>
+                        <th className="p-4 font-medium">Thư mục</th>
+                        <th className="p-4 font-medium">Loại</th>
+                        <th className="p-4 font-medium">Ngày tạo</th>
+                        <th className="p-4 font-medium text-right">Thao tác</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {filteredDocs.map((doc) => (
+                        <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="p-4 font-medium text-gray-800">{doc.title}</td>
+                          <td className="p-4 text-gray-500 text-sm">
+                            {folders.find(f => f.id === doc.folderId)?.name || '-'}
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                              doc.type === 'quotation' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+                            }`}>
+                              {doc.type === 'quotation' ? 'Báo giá' : 'Biên bản bàn giao'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-gray-600">{doc.date}</td>
+                          <td className="p-4 text-right">
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  const data = doc.data;
+                                  if (data.businessInfo) setBusinessInfo(data.businessInfo);
+                                  if (data.customerName !== undefined) setCustomerName(data.customerName);
+                                  if (data.customerAddress !== undefined) setCustomerAddress(data.customerAddress);
+                                  if (data.customerRepresentative !== undefined) setCustomerRepresentative(data.customerRepresentative);
+                                  if (data.customerPosition !== undefined) setCustomerPosition(data.customerPosition);
+                                  if (data.isHandoverMode !== undefined) setIsHandoverMode(data.isHandoverMode);
+                                  if (data.quoteDate) setQuoteDate(data.quoteDate);
+                                  if (data.items) setItems(data.items);
+                                  if (data.vatOption) setVatOption(data.vatOption);
+                                  if (data.customVatRate !== undefined) setCustomVatRate(data.customVatRate);
+                                  if (data.columnWidths) setColumnWidths(data.columnWidths);
+                                  if (data.sectionColumns) setSectionColumns(data.sectionColumns);
+                                  if (data.layout) setLayout(data.layout);
+                                  if (data.componentSettings) setComponentSettings(data.componentSettings);
+                                  if (data.paperSize) setPaperSize(data.paperSize);
+                                  if (data.printOrientation) setPrintOrientation(data.printOrientation);
+                                  if (data.margins) setMargins(data.margins);
+                                  if (data.rowSpacing) setRowSpacing(data.rowSpacing);
+                                  if (data.selectedTemplateId) setSelectedTemplateId(data.selectedTemplateId);
+                                  setCurrentDocumentId(doc.id);
+                                  setCurrentView('editor');
+                                }}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Xem / Sửa"
+                              >
+                                <FileText size={18} />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
+                                    const updatedDocs = savedDocuments.filter(d => d.id !== doc.id);
+                                    setSavedDocuments(updatedDocs);
+                                    localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
+                                  }
+                                }}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Xóa"
+                              >
+                                <X size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -731,7 +825,7 @@ export default function App() {
               <span className="hidden sm:inline text-sm font-medium">Quản lý</span>
             </button>
             <button
-              onClick={saveToManagement}
+              onClick={() => setShowSaveModal(true)}
               className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1 bg-blue-800"
               title="Lưu vào quản lý"
             >
@@ -1794,6 +1888,79 @@ export default function App() {
           </DraggablePanel>
         )}
       </div>
+
+      {/* Save Modal */}
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm print:hidden">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 border border-gray-100">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-900">Lưu tài liệu</h3>
+              <button onClick={() => setShowSaveModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tên tài liệu</label>
+              <input
+                type="text"
+                value={`${businessInfo.name} - ${customerName || 'Khách hàng mới'}`}
+                disabled
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">Tên tài liệu được tạo tự động từ tên đơn vị và khách hàng.</p>
+            </div>
+
+            <div className="mb-6">
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm font-medium text-gray-700">Chọn thư mục lưu</label>
+                <button
+                  onClick={() => {
+                    const name = window.prompt('Nhập tên thư mục mới:');
+                    if (name) {
+                      const newFolder: Folder = { id: Date.now().toString(), name };
+                      const updatedFolders = [...folders, newFolder];
+                      setFolders(updatedFolders);
+                      localStorage.setItem('folders', JSON.stringify(updatedFolders));
+                      setSaveFolderId(newFolder.id);
+                    }
+                  }}
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                >
+                  <Plus size={12} />
+                  Tạo thư mục mới
+                </button>
+              </div>
+              <select
+                value={saveFolderId || ''}
+                onChange={(e) => setSaveFolderId(e.target.value || null)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                <option value="">-- Không có thư mục (Lưu ở ngoài) --</option>
+                {folders.map(folder => (
+                  <option key={folder.id} value={folder.id}>{folder.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowSaveModal(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors font-medium text-sm"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={saveToManagement}
+                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium text-sm flex items-center gap-2"
+              >
+                <Save size={16} />
+                Lưu tài liệu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Print Warning Modal */}
       {showPrintWarning && (

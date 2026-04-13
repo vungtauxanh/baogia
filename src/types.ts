@@ -46,11 +46,17 @@ export interface ComponentSettings {
   alignment: 'left' | 'center' | 'right';
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+}
+
 export interface SavedDocument {
   id: string;
   title: string;
   date: string;
   type: 'quotation' | 'handover';
+  folderId?: string;
   data: QuotationData;
 }
 
