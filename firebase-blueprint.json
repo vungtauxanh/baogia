@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "Folder": {
+      "title": "Folder",
+      "description": "A folder to organize documents",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the folder"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who owns the folder"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the folder was created"
+        }
+      },
+      "required": ["name", "userId", "createdAt"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "A quotation or handover document",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "The title of the document"
+        },
+        "date": {
+          "type": "string",
+          "description": "The date of the document"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["quotation", "handover"],
+          "description": "The type of the document"
+        },
+        "folderId": {
+          "type": "string",
+          "description": "The ID of the folder this document belongs to (optional)"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who owns the document"
+        },
+        "data": {
+          "type": "string",
+          "description": "JSON stringified QuotationData"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the document was created"
+        }
+      },
+      "required": ["title", "date", "type", "userId", "data", "createdAt"]
+    },
+    "Profile": {
+      "title": "Profile",
+      "description": "A business profile",
+      "type": "object",
+      "properties": {
+        "profileName": {
+          "type": "string",
+          "description": "The name of the profile"
+        },
+        "userId": {
+          "type": "string",
+          "description": "The ID of the user who owns the profile"
+        },
+        "data": {
+          "type": "string",
+          "description": "JSON stringified BusinessInfo"
+        },
+        "createdAt": {
+          "type": "timestamp",
+          "description": "When the profile was created"
+        }
+      },
+      "required": ["profileName", "userId", "data", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/profiles/{profileId}": {
+      "schema": {
+        "$ref": "#/entities/Profile"
+      },
+      "description": "Stores user business profiles"
+    },
+    "/folders/{folderId}": {
+      "schema": {
+        "$ref": "#/entities/Folder"
+      },
+      "description": "Stores user folders"
+    },
+    "/documents/{documentId}": {
+      "schema": {
+        "$ref": "#/entities/Document"
+      },
+      "description": "Stores user documents"
+    }
+  }
+}

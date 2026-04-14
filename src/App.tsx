@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type, X } from 'lucide-react';
+import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type, X, LogIn, LogOut } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings } from './types';
+import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings, SavedDocument, Folder } from './types';
+import { auth, db, signInWithGoogle, logOut, handleFirestoreError, OperationType } from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { ClassicTemplate } from './components/templates/ClassicTemplate';
 import { ModernTemplate } from './components/templates/ModernTemplate';
 import { MinimalistTemplate } from './components/templates/MinimalistTemplate';
@@ -144,38 +147,45 @@ const DEFAULT_PROFILES: BusinessProfile[] = [
 ];
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(DEFAULT_PROFILES[0].data);
 
-  const [businessProfiles, setBusinessProfiles] = useState<BusinessProfile[]>(() => {
-    const saved = localStorage.getItem('businessProfiles');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.length > 0) return parsed;
-      } catch (e) {
-        return DEFAULT_PROFILES;
-      }
-    }
-    return DEFAULT_PROFILES;
-  });
+  const [businessProfiles, setBusinessProfiles] = useState<BusinessProfile[]>(DEFAULT_PROFILES);
 
   const [profileNameInput, setProfileNameInput] = useState('');
 
-  const saveBusinessProfile = () => {
+  const saveBusinessProfile = async () => {
     if (!profileNameInput.trim()) {
       alert('Vui lòng nhập tên cấu hình!');
       return;
     }
-    const newProfile: BusinessProfile = {
-      id: Date.now().toString(),
+    if (!user) {
+      alert('Vui lòng đăng nhập để lưu cấu hình!');
+      return;
+    }
+    const newProfile = {
       profileName: profileNameInput.trim(),
-      data: { ...businessInfo }
+      userId: user.uid,
+      data: JSON.stringify(businessInfo),
+      createdAt: serverTimestamp()
     };
-    const updatedProfiles = [...businessProfiles, newProfile];
-    setBusinessProfiles(updatedProfiles);
-    localStorage.setItem('businessProfiles', JSON.stringify(updatedProfiles));
-    setProfileNameInput('');
-    alert('Đã lưu cấu hình thành công!');
+    try {
+      await addDoc(collection(db, 'profiles'), newProfile);
+      setProfileNameInput('');
+      alert('Đã lưu cấu hình thành công!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'profiles');
+    }
   };
 
   const loadBusinessProfile = (id: string) => {
@@ -185,11 +195,17 @@ export default function App() {
     }
   };
 
-  const deleteBusinessProfile = (id: string) => {
+  const deleteBusinessProfile = async (id: string) => {
     if (window.confirm('Bạn có chắc chắn muốn xóa cấu hình này?')) {
-      const updatedProfiles = businessProfiles.filter(p => p.id !== id);
-      setBusinessProfiles(updatedProfiles);
-      localStorage.setItem('businessProfiles', JSON.stringify(updatedProfiles));
+      if (id.startsWith('default-')) {
+        alert('Không thể xóa cấu hình mặc định!');
+        return;
+      }
+      try {
+        await deleteDoc(doc(db, 'profiles', id));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `profiles/${id}`);
+      }
     }
   };
 
@@ -339,23 +355,65 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('savedDocuments');
-    if (saved) {
-      try {
-        setSavedDocuments(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to parse saved documents', e);
-      }
+    if (!isAuthReady) return;
+    
+    if (user) {
+      const qDocs = query(collection(db, 'documents'), where('userId', '==', user.uid));
+      const unsubDocs = onSnapshot(qDocs, (snapshot) => {
+        const docs: SavedDocument[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          docs.push({
+            id: doc.id,
+            title: data.title,
+            date: data.date,
+            type: data.type,
+            folderId: data.folderId,
+            data: JSON.parse(data.data)
+          });
+        });
+        setSavedDocuments(docs);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'documents');
+      });
+
+      const qFolders = query(collection(db, 'folders'), where('userId', '==', user.uid));
+      const unsubFolders = onSnapshot(qFolders, (snapshot) => {
+        const flds: Folder[] = [];
+        snapshot.forEach((doc) => {
+          flds.push({ id: doc.id, name: doc.data().name });
+        });
+        setFolders(flds);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'folders');
+      });
+
+      const qProfiles = query(collection(db, 'profiles'), where('userId', '==', user.uid));
+      const unsubProfiles = onSnapshot(qProfiles, (snapshot) => {
+        const profs: BusinessProfile[] = [...DEFAULT_PROFILES];
+        snapshot.forEach((doc) => {
+          profs.push({
+            id: doc.id,
+            profileName: doc.data().profileName,
+            data: JSON.parse(doc.data().data)
+          });
+        });
+        setBusinessProfiles(profs);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'profiles');
+      });
+
+      return () => {
+        unsubDocs();
+        unsubFolders();
+        unsubProfiles();
+      };
+    } else {
+      setSavedDocuments([]);
+      setFolders([]);
+      setBusinessProfiles(DEFAULT_PROFILES);
     }
-    const savedFolders = localStorage.getItem('folders');
-    if (savedFolders) {
-      try {
-        setFolders(JSON.parse(savedFolders));
-      } catch (e) {
-        console.error('Failed to parse folders', e);
-      }
-    }
-  }, []);
+  }, [user, isAuthReady]);
 
   const handleSaveData = () => {
     const dataToSave = {
@@ -588,30 +646,34 @@ export default function App() {
     componentSettings
   };
 
-  const saveToManagement = () => {
-    const docId = currentDocumentId || Date.now().toString();
+  const saveToManagement = async () => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để lưu tài liệu!');
+      return;
+    }
     const docTitle = `${businessInfo.name} - ${customerName || 'Khách hàng mới'}`;
-    const newDoc: SavedDocument = {
-      id: docId,
+    const newDoc = {
       title: docTitle,
       date: quoteDate || new Date().toLocaleDateString('vi-VN'),
       type: isHandoverMode ? 'handover' : 'quotation',
-      folderId: saveFolderId || undefined,
-      data: quotationData
+      folderId: saveFolderId || null,
+      userId: user.uid,
+      data: JSON.stringify(quotationData),
+      createdAt: serverTimestamp()
     };
     
-    let updatedDocs;
-    if (currentDocumentId) {
-      updatedDocs = savedDocuments.map(doc => doc.id === docId ? newDoc : doc);
-    } else {
-      updatedDocs = [...savedDocuments, newDoc];
-      setCurrentDocumentId(docId);
+    try {
+      if (currentDocumentId) {
+        await updateDoc(doc(db, 'documents', currentDocumentId), newDoc);
+      } else {
+        const docRef = await addDoc(collection(db, 'documents'), newDoc);
+        setCurrentDocumentId(docRef.id);
+      }
+      setShowSaveModal(false);
+      alert('Đã lưu vào trang quản lý!');
+    } catch (error) {
+      handleFirestoreError(error, currentDocumentId ? OperationType.UPDATE : OperationType.CREATE, 'documents');
     }
-    
-    setSavedDocuments(updatedDocs);
-    localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
-    setShowSaveModal(false);
-    alert('Đã lưu vào trang quản lý!');
   };
 
   const SelectedTemplate = TEMPLATES.find(t => t.id === selectedTemplateId)?.component || ClassicTemplate;
@@ -623,22 +685,33 @@ export default function App() {
       return matchesSearch && matchesFolder;
     });
 
-    const handleCreateFolder = () => {
+    const handleCreateFolder = async () => {
+      if (!user) {
+        alert('Vui lòng đăng nhập để tạo thư mục!');
+        return;
+      }
       const name = window.prompt('Nhập tên thư mục mới:');
       if (name) {
-        const newFolder: Folder = { id: Date.now().toString(), name };
-        const updatedFolders = [...folders, newFolder];
-        setFolders(updatedFolders);
-        localStorage.setItem('folders', JSON.stringify(updatedFolders));
+        try {
+          await addDoc(collection(db, 'folders'), {
+            name,
+            userId: user.uid,
+            createdAt: serverTimestamp()
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, 'folders');
+        }
       }
     };
 
-    const handleDeleteFolder = (id: string) => {
+    const handleDeleteFolder = async (id: string) => {
       if (window.confirm('Bạn có chắc chắn muốn xóa thư mục này? Các tài liệu bên trong sẽ không bị xóa.')) {
-        const updatedFolders = folders.filter(f => f.id !== id);
-        setFolders(updatedFolders);
-        localStorage.setItem('folders', JSON.stringify(updatedFolders));
-        if (selectedFolderId === id) setSelectedFolderId(null);
+        try {
+          await deleteDoc(doc(db, 'folders', id));
+          if (selectedFolderId === id) setSelectedFolderId(null);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `folders/${id}`);
+        }
       }
     };
 
@@ -650,16 +723,36 @@ export default function App() {
               <FileText className="text-blue-600" size={32} />
               Quản lý Báo giá & Biên bản
             </h1>
-            <button
-              onClick={() => {
-                setCurrentDocumentId(null);
-                setCurrentView('editor');
-              }}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm"
-            >
-              <Plus size={20} />
-              Tạo mới
-            </button>
+            <div className="flex items-center gap-3">
+              {user ? (
+                <button
+                  onClick={logOut}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors flex items-center gap-2 font-medium shadow-sm"
+                  title={`Đăng xuất (${user.email})`}
+                >
+                  <LogOut size={20} />
+                  Đăng xuất
+                </button>
+              ) : (
+                <button
+                  onClick={signInWithGoogle}
+                  className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2 font-medium shadow-sm"
+                >
+                  <LogIn size={20} />
+                  Đăng nhập
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setCurrentDocumentId(null);
+                  setCurrentView('editor');
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm"
+              >
+                <Plus size={20} />
+                Tạo mới
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col md:flex-row gap-6">
@@ -779,11 +872,13 @@ export default function App() {
                                 <FileText size={18} />
                               </button>
                               <button
-                                onClick={() => {
+                                onClick={async () => {
                                   if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
-                                    const updatedDocs = savedDocuments.filter(d => d.id !== doc.id);
-                                    setSavedDocuments(updatedDocs);
-                                    localStorage.setItem('savedDocuments', JSON.stringify(updatedDocs));
+                                    try {
+                                      await deleteDoc(doc(db, 'documents', doc.id));
+                                    } catch (error) {
+                                      handleFirestoreError(error, OperationType.DELETE, `documents/${doc.id}`);
+                                    }
                                   }
                                 }}
                                 className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -862,6 +957,23 @@ export default function App() {
               <Save size={18} />
             </button>
             <div className="w-px h-8 bg-blue-400 mx-1"></div>
+            {user ? (
+              <button
+                onClick={logOut}
+                className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1"
+                title={`Đăng xuất (${user.email})`}
+              >
+                <LogOut size={18} />
+              </button>
+            ) : (
+              <button
+                onClick={signInWithGoogle}
+                className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1"
+                title="Đăng nhập"
+              >
+                <LogIn size={18} />
+              </button>
+            )}
             <button
               onClick={() => setShowSettings(!showSettings)}
               className={`p-2 rounded transition-colors ${showSettings ? 'bg-blue-800' : 'hover:bg-blue-700'}`}
@@ -1915,14 +2027,23 @@ export default function App() {
               <div className="flex justify-between items-center mb-1">
                 <label className="block text-sm font-medium text-gray-700">Chọn thư mục lưu</label>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    if (!user) {
+                      alert('Vui lòng đăng nhập để tạo thư mục!');
+                      return;
+                    }
                     const name = window.prompt('Nhập tên thư mục mới:');
                     if (name) {
-                      const newFolder: Folder = { id: Date.now().toString(), name };
-                      const updatedFolders = [...folders, newFolder];
-                      setFolders(updatedFolders);
-                      localStorage.setItem('folders', JSON.stringify(updatedFolders));
-                      setSaveFolderId(newFolder.id);
+                      try {
+                        const docRef = await addDoc(collection(db, 'folders'), {
+                          name,
+                          userId: user.uid,
+                          createdAt: serverTimestamp()
+                        });
+                        setSaveFolderId(docRef.id);
+                      } catch (error) {
+                        handleFirestoreError(error, OperationType.CREATE, 'folders');
+                      }
                     }
                   }}
                   className="text-xs text-blue-600 hover:underline flex items-center gap-1"
