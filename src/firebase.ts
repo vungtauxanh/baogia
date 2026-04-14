@@ -13,8 +13,15 @@ export const provider = new GoogleAuthProvider();
 export const signInWithGoogle = async () => {
   try {
     await signInWithPopup(auth, provider);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error signing in with Google", error);
+    if (error.code === 'auth/unauthorized-domain') {
+      alert("Lỗi: Tên miền này chưa được cấp phép trong Firebase.\nVui lòng vào Firebase Console -> Authentication -> Settings -> Authorized domains và thêm tên miền hiện tại (ví dụ: omega.vercel.app) vào danh sách.");
+    } else if (error.code === 'auth/popup-closed-by-user') {
+      // User closed the popup, no need to alert
+    } else {
+      alert("Lỗi đăng nhập: " + error.message);
+    }
   }
 };
 

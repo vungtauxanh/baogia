@@ -1,0 +1,1 @@
+eof globalThis<"u"&&globalThis.fetch)return globalThis.f
