@@ -95,6 +95,9 @@ export interface QuotationData {
     price: number;
     amount: number;
   };
+  vatOption?: 'none' | 'include' | 'exclude';
+  customVatRate?: number;
+  selectedTemplateId?: string;
 }
 
 export interface TemplateProps {

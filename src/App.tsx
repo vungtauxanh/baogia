@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type, X, LogIn, LogOut } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings, SavedDocument, Folder } from './types';
 import { auth, db, signInWithGoogle, logOut, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -464,6 +466,12 @@ export default function App() {
         if (data.sectionColumns) setSectionColumns(data.sectionColumns);
         if (data.layout) setLayout(data.layout);
         if (data.componentSettings) setComponentSettings(data.componentSettings);
+        if (data.paperSize) setPaperSize(data.paperSize);
+        if (data.printOrientation) setPrintOrientation(data.printOrientation);
+        if (data.margins) setMargins(data.margins);
+        if (data.rowSpacing) setRowSpacing(data.rowSpacing);
+        if (data.sectionOrder) setSectionOrder(data.sectionOrder);
+        if (data.sectionSpacing) setSectionSpacing(data.sectionSpacing);
       } catch (error) {
         alert('File dữ liệu không hợp lệ!');
       }
@@ -643,7 +651,10 @@ export default function App() {
     sectionSpacing,
     sectionColumns,
     layout,
-    componentSettings
+    componentSettings,
+    selectedTemplateId,
+    vatOption,
+    customVatRate,
   };
 
   const saveToManagement = async () => {
