@@ -472,6 +472,7 @@ export default function App() {
         if (data.rowSpacing) setRowSpacing(data.rowSpacing);
         if (data.sectionOrder) setSectionOrder(data.sectionOrder);
         if (data.sectionSpacing) setSectionSpacing(data.sectionSpacing);
+        setCurrentDocumentId(null);
       } catch (error) {
         alert('File dữ liệu không hợp lệ!');
       }
@@ -771,20 +772,26 @@ export default function App() {
       return;
     }
     const docTitle = `${businessInfo.name} - ${customerName || 'Khách hàng mới'}`;
-    const newDoc = {
-      title: docTitle,
-      date: quoteDate || new Date().toLocaleDateString('vi-VN'),
-      type: isHandoverMode ? 'handover' : 'quotation',
-      folderId: saveFolderId || null,
-      userId: user.uid,
-      data: JSON.stringify(quotationData),
-      createdAt: serverTimestamp()
-    };
-    
     try {
       if (currentDocumentId) {
-        await updateDoc(doc(db, 'documents', currentDocumentId), newDoc);
+        const updateDocData = {
+          title: docTitle,
+          date: quoteDate || new Date().toLocaleDateString('vi-VN'),
+          type: isHandoverMode ? 'handover' : 'quotation',
+          folderId: saveFolderId || null,
+          data: JSON.stringify(quotationData),
+        };
+        await updateDoc(doc(db, 'documents', currentDocumentId), updateDocData);
       } else {
+        const newDoc = {
+          title: docTitle,
+          date: quoteDate || new Date().toLocaleDateString('vi-VN'),
+          type: isHandoverMode ? 'handover' : 'quotation',
+          folderId: saveFolderId || null,
+          userId: user.uid,
+          data: JSON.stringify(quotationData),
+          createdAt: serverTimestamp()
+        };
         const docRef = await addDoc(collection(db, 'documents'), newDoc);
         setCurrentDocumentId(docRef.id);
       }
@@ -798,9 +805,9 @@ export default function App() {
   const SelectedTemplate = TEMPLATES.find(t => t.id === selectedTemplateId)?.component || ClassicTemplate;
 
   if (currentView === 'management') {
-    const filteredDocs = savedDocuments.filter(doc => {
-      const matchesSearch = doc.title.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesFolder = selectedFolderId ? doc.folderId === selectedFolderId : true;
+    const filteredDocs = savedDocuments.filter(docItem => {
+      const matchesSearch = docItem.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesFolder = selectedFolderId ? docItem.folderId === selectedFolderId : true;
       return matchesSearch && matchesFolder;
     });
 
@@ -944,25 +951,25 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {filteredDocs.map((doc) => (
-                        <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="p-4 font-medium text-gray-800">{doc.title}</td>
+                      {filteredDocs.map((docItem) => (
+                        <tr key={docItem.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="p-4 font-medium text-gray-800">{docItem.title}</td>
                           <td className="p-4 text-gray-500 text-sm">
-                            {folders.find(f => f.id === doc.folderId)?.name || '-'}
+                            {folders.find(f => f.id === docItem.folderId)?.name || '-'}
                           </td>
                           <td className="p-4">
                             <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                              doc.type === 'quotation' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+                              docItem.type === 'quotation' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
                             }`}>
-                              {doc.type === 'quotation' ? 'Báo giá' : 'Biên bản bàn giao'}
+                              {docItem.type === 'quotation' ? 'Báo giá' : 'Biên bản bàn giao'}
                             </span>
                           </td>
-                          <td className="p-4 text-gray-600">{doc.date}</td>
+                          <td className="p-4 text-gray-600">{docItem.date}</td>
                           <td className="p-4 text-right">
                             <div className="flex justify-end gap-2">
                               <button
                                 onClick={() => {
-                                  const data = doc.data;
+                                  const data = docItem.data;
                                   if (data.businessInfo) setBusinessInfo(data.businessInfo);
                                   if (data.customerName !== undefined) setCustomerName(data.customerName);
                                   if (data.customerAddress !== undefined) setCustomerAddress(data.customerAddress);
@@ -982,7 +989,7 @@ export default function App() {
                                   if (data.margins) setMargins(data.margins);
                                   if (data.rowSpacing) setRowSpacing(data.rowSpacing);
                                   if (data.selectedTemplateId) setSelectedTemplateId(data.selectedTemplateId);
-                                  setCurrentDocumentId(doc.id);
+                                  setCurrentDocumentId(docItem.id);
                                   setCurrentView('editor');
                                 }}
                                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -994,9 +1001,9 @@ export default function App() {
                                 onClick={async () => {
                                   if (window.confirm('Bạn có chắc chắn muốn xóa tài liệu này?')) {
                                     try {
-                                      await deleteDoc(doc(db, 'documents', doc.id));
+                                      await deleteDoc(doc(db, 'documents', docItem.id));
                                     } catch (error) {
-                                      handleFirestoreError(error, OperationType.DELETE, `documents/${doc.id}`);
+                                      handleFirestoreError(error, OperationType.DELETE, `documents/${docItem.id}`);
                                     }
                                   }
                                 }}
