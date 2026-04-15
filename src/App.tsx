@@ -772,14 +772,26 @@ export default function App() {
       alert('Vui lòng đăng nhập để lưu tài liệu!');
       return;
     }
-    const docTitle = `${businessInfo.name} - ${customerName || 'Khách hàng mới'}`;
+    let docTitle = `${businessInfo.name || 'Báo giá'} - ${customerName || 'Khách hàng mới'}`;
+    if (docTitle.length > 200) {
+      docTitle = docTitle.substring(0, 197) + '...';
+    }
     try {
       if (currentDocumentId) {
+        let finalDate = quoteDate || new Date().toLocaleDateString('vi-VN');
+        if (finalDate.length > 50) finalDate = finalDate.substring(0, 50);
+        
+        const jsonData = JSON.stringify(quotationData);
+        if (jsonData.length > 1000000) {
+          alert('Dữ liệu quá lớn (vượt quá 1MB). Vui lòng giảm kích thước hình ảnh logo hoặc chữ ký trước khi lưu.');
+          return;
+        }
+
         const updateDocData: any = {
           title: docTitle,
-          date: quoteDate || new Date().toLocaleDateString('vi-VN'),
+          date: finalDate,
           type: isHandoverMode ? 'handover' : 'quotation',
-          data: JSON.stringify(quotationData),
+          data: jsonData,
         };
         if (saveFolderId) {
           updateDocData.folderId = saveFolderId;
@@ -788,12 +800,21 @@ export default function App() {
         }
         await updateDoc(doc(db, 'documents', currentDocumentId), updateDocData);
       } else {
+        let finalDate = quoteDate || new Date().toLocaleDateString('vi-VN');
+        if (finalDate.length > 50) finalDate = finalDate.substring(0, 50);
+
+        const jsonData = JSON.stringify(quotationData);
+        if (jsonData.length > 1000000) {
+          alert('Dữ liệu quá lớn (vượt quá 1MB). Vui lòng giảm kích thước hình ảnh logo hoặc chữ ký trước khi lưu.');
+          return;
+        }
+
         const newDoc: any = {
           title: docTitle,
-          date: quoteDate || new Date().toLocaleDateString('vi-VN'),
+          date: finalDate,
           type: isHandoverMode ? 'handover' : 'quotation',
           userId: user.uid,
-          data: JSON.stringify(quotationData),
+          data: jsonData,
           createdAt: serverTimestamp()
         };
         if (saveFolderId) {
@@ -804,7 +825,8 @@ export default function App() {
       }
       setShowSaveModal(false);
       alert('Đã lưu vào trang quản lý!');
-    } catch (error) {
+    } catch (error: any) {
+      alert('Có lỗi xảy ra khi lưu tài liệu: ' + (error.message || 'Vui lòng thử lại.'));
       handleFirestoreError(error, currentDocumentId ? OperationType.UPDATE : OperationType.CREATE, 'documents');
     }
   };
