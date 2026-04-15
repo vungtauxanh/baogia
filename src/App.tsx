@@ -6,7 +6,7 @@ import { saveAs } from 'file-saver';
 import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings, SavedDocument, Folder } from './types';
 import { auth, db, signInWithGoogle, logOut, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, query, where, deleteField } from 'firebase/firestore';
 import { ClassicTemplate } from './components/templates/ClassicTemplate';
 import { ModernTemplate } from './components/templates/ModernTemplate';
 import { MinimalistTemplate } from './components/templates/MinimalistTemplate';
@@ -473,6 +473,7 @@ export default function App() {
         if (data.sectionOrder) setSectionOrder(data.sectionOrder);
         if (data.sectionSpacing) setSectionSpacing(data.sectionSpacing);
         setCurrentDocumentId(null);
+        setSaveFolderId(null);
       } catch (error) {
         alert('File dữ liệu không hợp lệ!');
       }
@@ -774,24 +775,30 @@ export default function App() {
     const docTitle = `${businessInfo.name} - ${customerName || 'Khách hàng mới'}`;
     try {
       if (currentDocumentId) {
-        const updateDocData = {
+        const updateDocData: any = {
           title: docTitle,
           date: quoteDate || new Date().toLocaleDateString('vi-VN'),
           type: isHandoverMode ? 'handover' : 'quotation',
-          folderId: saveFolderId || null,
           data: JSON.stringify(quotationData),
         };
+        if (saveFolderId) {
+          updateDocData.folderId = saveFolderId;
+        } else {
+          updateDocData.folderId = deleteField();
+        }
         await updateDoc(doc(db, 'documents', currentDocumentId), updateDocData);
       } else {
-        const newDoc = {
+        const newDoc: any = {
           title: docTitle,
           date: quoteDate || new Date().toLocaleDateString('vi-VN'),
           type: isHandoverMode ? 'handover' : 'quotation',
-          folderId: saveFolderId || null,
           userId: user.uid,
           data: JSON.stringify(quotationData),
           createdAt: serverTimestamp()
         };
+        if (saveFolderId) {
+          newDoc.folderId = saveFolderId;
+        }
         const docRef = await addDoc(collection(db, 'documents'), newDoc);
         setCurrentDocumentId(docRef.id);
       }
@@ -871,6 +878,7 @@ export default function App() {
               <button
                 onClick={() => {
                   setCurrentDocumentId(null);
+                  setSaveFolderId(null);
                   setCurrentView('editor');
                 }}
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm"
@@ -990,6 +998,7 @@ export default function App() {
                                   if (data.rowSpacing) setRowSpacing(data.rowSpacing);
                                   if (data.selectedTemplateId) setSelectedTemplateId(data.selectedTemplateId);
                                   setCurrentDocumentId(docItem.id);
+                                  setSaveFolderId(docItem.folderId || null);
                                   setCurrentView('editor');
                                 }}
                                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
