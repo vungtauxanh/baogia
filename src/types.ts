@@ -51,6 +51,21 @@ export interface Folder {
   name: string;
 }
 
+export interface Customer {
+  id: string;
+  name: string;
+  address?: string;
+  representative?: string;
+  position?: string;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  unit?: string;
+  price: number;
+}
+
 export interface SavedDocument {
   id: string;
   title: string;

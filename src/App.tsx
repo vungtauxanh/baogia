@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type, X, LogIn, LogOut } from 'lucide-react';
+import { Plus, Trash2, Printer, Settings2, FileText, Image as ImageIcon, LayoutTemplate, FileDown, Table, Upload, Save, FolderOpen, Type, X, LogIn, LogOut, GripVertical, Mail } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
-import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings, SavedDocument, Folder } from './types';
+import { Item, BusinessInfo, QuotationData, BusinessProfile, LayoutRow, ComponentSettings, SavedDocument, Folder, Customer, Product } from './types';
 import { auth, db, signInWithGoogle, logOut, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, query, where, deleteField } from 'firebase/firestore';
+import { compressImage } from './utils/imageCompression';
 import { ClassicTemplate } from './components/templates/ClassicTemplate';
 import { ModernTemplate } from './components/templates/ModernTemplate';
 import { MinimalistTemplate } from './components/templates/MinimalistTemplate';
@@ -235,6 +236,7 @@ export default function App() {
   const [rowSpacing, setRowSpacing] = useState<number>(10);
   const [printScale, setPrintScale] = useState<number>(100);
   const [margins, setMargins] = useState({ top: 15, right: 15, bottom: 15, left: 15 });
+  const [watermark, setWatermark] = useState<boolean>(false);
   const [sectionOrder, setSectionOrder] = useState(['business', 'title', 'date', 'customer', 'items', 'footer']);
   const [sectionSpacing, setSectionSpacing] = useState(20);
   const [sectionColumns, setSectionColumns] = useState<Record<string, number>>({});
@@ -246,6 +248,8 @@ export default function App() {
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const [savedDocuments, setSavedDocuments] = useState<SavedDocument[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [saveFolderId, setSaveFolderId] = useState<string | null>(null);
@@ -288,6 +292,74 @@ export default function App() {
   const [discountPercent, setDiscountPercent] = useState<number | ''>('');
   
   const excelFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load draft on mount
+  useEffect(() => {
+    const draft = localStorage.getItem('quotation_draft');
+    if (draft && !currentDocumentId) {
+      try {
+        const data = JSON.parse(draft);
+        if (data.businessInfo) setBusinessInfo(data.businessInfo);
+        if (data.customerName !== undefined) setCustomerName(data.customerName);
+        if (data.customerAddress !== undefined) setCustomerAddress(data.customerAddress);
+        if (data.customerRepresentative !== undefined) setCustomerRepresentative(data.customerRepresentative);
+        if (data.customerPosition !== undefined) setCustomerPosition(data.customerPosition);
+        if (data.isHandoverMode !== undefined) setIsHandoverMode(data.isHandoverMode);
+        if (data.quoteDate) setQuoteDate(data.quoteDate);
+        if (data.items) setItems(data.items);
+        if (data.vatOption) setVatOption(data.vatOption);
+        if (data.customVatRate !== undefined) setCustomVatRate(data.customVatRate);
+        if (data.selectedTemplateId) setSelectedTemplateId(data.selectedTemplateId);
+        if (data.columnWidths) setColumnWidths(data.columnWidths);
+        if (data.sectionColumns) setSectionColumns(data.sectionColumns);
+        if (data.layout) setLayout(data.layout);
+        if (data.componentSettings) setComponentSettings(data.componentSettings);
+        if (data.paperSize) setPaperSize(data.paperSize);
+        if (data.printOrientation) setPrintOrientation(data.printOrientation);
+        if (data.margins) setMargins(data.margins);
+        if (data.watermark !== undefined) setWatermark(data.watermark);
+        if (data.rowSpacing) setRowSpacing(data.rowSpacing);
+        if (data.sectionOrder) setSectionOrder(data.sectionOrder);
+        if (data.sectionSpacing) setSectionSpacing(data.sectionSpacing);
+      } catch (e) {
+        console.error("Failed to load draft", e);
+      }
+    }
+  }, []);
+
+  const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedItemIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    // Make it slightly transparent while dragging
+    if (e.target instanceof HTMLElement) {
+      e.target.style.opacity = '0.5';
+    }
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    setDraggedItemIndex(null);
+    if (e.target instanceof HTMLElement) {
+      e.target.style.opacity = '1';
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    if (draggedItemIndex === null || draggedItemIndex === dropIndex) return;
+    
+    const newItems = [...items];
+    const draggedItem = newItems[draggedItemIndex];
+    newItems.splice(draggedItemIndex, 1);
+    newItems.splice(dropIndex, 0, draggedItem);
+    setItems(newItems);
+  };
 
   const handleImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -390,6 +462,41 @@ export default function App() {
         handleFirestoreError(error, OperationType.GET, 'folders');
       });
 
+      const qCustomers = query(collection(db, 'customers'), where('userId', '==', user.uid));
+      const unsubCustomers = onSnapshot(qCustomers, (snapshot) => {
+        const custs: Customer[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          custs.push({ 
+            id: doc.id, 
+            name: data.name,
+            address: data.address,
+            representative: data.representative,
+            position: data.position
+          });
+        });
+        setCustomers(custs);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'customers');
+      });
+
+      const qProducts = query(collection(db, 'products'), where('userId', '==', user.uid));
+      const unsubProducts = onSnapshot(qProducts, (snapshot) => {
+        const prods: Product[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          prods.push({ 
+            id: doc.id, 
+            name: data.name,
+            unit: data.unit,
+            price: data.price
+          });
+        });
+        setProducts(prods);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.GET, 'products');
+      });
+
       const qProfiles = query(collection(db, 'profiles'), where('userId', '==', user.uid));
       const unsubProfiles = onSnapshot(qProfiles, (snapshot) => {
         const profs: BusinessProfile[] = [...DEFAULT_PROFILES];
@@ -409,6 +516,8 @@ export default function App() {
         unsubDocs();
         unsubFolders();
         unsubProfiles();
+        unsubCustomers();
+        unsubProducts();
       };
     } else {
       setSavedDocuments([]);
@@ -469,6 +578,7 @@ export default function App() {
         if (data.paperSize) setPaperSize(data.paperSize);
         if (data.printOrientation) setPrintOrientation(data.printOrientation);
         if (data.margins) setMargins(data.margins);
+        if (data.watermark !== undefined) setWatermark(data.watermark);
         if (data.rowSpacing) setRowSpacing(data.rowSpacing);
         if (data.sectionOrder) setSectionOrder(data.sectionOrder);
         if (data.sectionSpacing) setSectionSpacing(data.sectionSpacing);
@@ -504,25 +614,29 @@ export default function App() {
     );
   };
 
-  const handleImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        handleItemChange(id, 'image', reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedDataUrl = await compressImage(file, 600, 600, 0.8);
+        handleItemChange(id, 'image', compressedDataUrl);
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        alert("Có lỗi xảy ra khi xử lý ảnh sản phẩm.");
+      }
     }
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setBusinessInfo({ ...businessInfo, logo: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedDataUrl = await compressImage(file, 400, 400, 0.8);
+        setBusinessInfo({ ...businessInfo, logo: compressedDataUrl });
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        alert("Có lỗi xảy ra khi xử lý ảnh logo.");
+      }
     }
   };
 
@@ -530,14 +644,16 @@ export default function App() {
     setBusinessInfo({ ...businessInfo, logo: '' });
   };
 
-  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setBusinessInfo({ ...businessInfo, signature: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedDataUrl = await compressImage(file, 400, 400, 0.8);
+        setBusinessInfo({ ...businessInfo, signature: compressedDataUrl });
+      } catch (error) {
+        console.error("Error compressing image:", error);
+        alert("Có lỗi xảy ra khi xử lý ảnh chữ ký.");
+      }
     }
   };
 
@@ -562,6 +678,52 @@ export default function App() {
   const actualVatRate = isVatIncluded ? 0 : (vatOption === 'custom' ? customVatRate : parseFloat(vatOption));
   const vatAmount = subtotal * (actualVatRate / 100);
   const total = subtotal + vatAmount;
+
+  // Auto-save to localStorage
+  useEffect(() => {
+    if (currentView === 'editor') {
+      const draftData = {
+        businessInfo,
+        customerName,
+        customerAddress,
+        customerRepresentative,
+        customerPosition,
+        isHandoverMode,
+        items,
+        subtotal,
+        vatRate: actualVatRate,
+        isVatIncluded,
+        total,
+        rowSpacing,
+        printOrientation,
+        paperSize,
+        margins,
+        watermark,
+        sectionOrder,
+        sectionSpacing,
+        sectionColumns,
+        layout,
+        componentSettings,
+        quoteDate,
+        columnWidths,
+        vatOption,
+        customVatRate,
+        selectedTemplateId
+      };
+      localStorage.setItem('quotation_draft', JSON.stringify(draftData));
+    }
+  }, [
+    businessInfo, customerName, customerAddress, customerRepresentative, customerPosition,
+    isHandoverMode, items, subtotal, actualVatRate, isVatIncluded, total, rowSpacing, printOrientation,
+    paperSize, margins, watermark, sectionOrder, sectionSpacing, sectionColumns, layout, componentSettings,
+    quoteDate, columnWidths, vatOption, customVatRate, selectedTemplateId, currentView
+  ]);
+
+  const handleSendEmail = () => {
+    const subject = encodeURIComponent(`Báo giá từ ${businessInfo.name || 'Công ty'}`);
+    const body = encodeURIComponent(`Kính gửi ${customerName || 'Quý khách hàng'},\n\nChúng tôi xin gửi báo giá chi tiết.\n\nTrân trọng,\n${businessInfo.name || ''}`);
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  };
 
   const handleDownloadPDF = () => {
     if (window.self !== window.top) {
@@ -767,6 +929,74 @@ export default function App() {
     customVatRate,
   };
 
+  const saveCustomer = async () => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để lưu khách hàng!');
+      return;
+    }
+    if (!customerName.trim()) {
+      alert('Vui lòng nhập tên khách hàng!');
+      return;
+    }
+    try {
+      const existingCustomer = customers.find(c => c.name.toLowerCase() === customerName.toLowerCase());
+      if (existingCustomer) {
+        await updateDoc(doc(db, 'customers', existingCustomer.id), {
+          name: customerName,
+          address: customerAddress,
+          representative: customerRepresentative,
+          position: customerPosition
+        });
+        alert('Đã cập nhật thông tin khách hàng!');
+      } else {
+        await addDoc(collection(db, 'customers'), {
+          name: customerName,
+          address: customerAddress,
+          representative: customerRepresentative,
+          position: customerPosition,
+          userId: user.uid,
+          createdAt: serverTimestamp()
+        });
+        alert('Đã lưu khách hàng mới!');
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'customers');
+    }
+  };
+
+  const saveProduct = async (item: Item) => {
+    if (!user) {
+      alert('Vui lòng đăng nhập để lưu sản phẩm!');
+      return;
+    }
+    if (!item.name.trim()) {
+      alert('Vui lòng nhập tên sản phẩm!');
+      return;
+    }
+    try {
+      const existingProduct = products.find(p => p.name.toLowerCase() === item.name.toLowerCase());
+      if (existingProduct) {
+        await updateDoc(doc(db, 'products', existingProduct.id), {
+          name: item.name,
+          unit: item.unit,
+          price: item.price
+        });
+        alert('Đã cập nhật thông tin sản phẩm!');
+      } else {
+        await addDoc(collection(db, 'products'), {
+          name: item.name,
+          unit: item.unit,
+          price: item.price,
+          userId: user.uid,
+          createdAt: serverTimestamp()
+        });
+        alert('Đã lưu sản phẩm mới!');
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'products');
+    }
+  };
+
   const saveToManagement = async () => {
     if (!user) {
       alert('Vui lòng đăng nhập để lưu tài liệu!');
@@ -824,6 +1054,7 @@ export default function App() {
         setCurrentDocumentId(docRef.id);
       }
       setShowSaveModal(false);
+      localStorage.removeItem('quotation_draft');
       alert('Đã lưu vào trang quản lý!');
     } catch (error: any) {
       alert('Có lỗi xảy ra khi lưu tài liệu: ' + (error.message || 'Vui lòng thử lại.'));
@@ -901,6 +1132,12 @@ export default function App() {
                 onClick={() => {
                   setCurrentDocumentId(null);
                   setSaveFolderId(null);
+                  localStorage.removeItem('quotation_draft');
+                  setCustomerName('');
+                  setCustomerAddress('');
+                  setCustomerRepresentative('');
+                  setCustomerPosition('');
+                  setItems([{ id: '1', name: '', unit: '', quantity: 1, price: 0, amount: 0, note: '' }]);
                   setCurrentView('editor');
                 }}
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 font-medium shadow-sm"
@@ -1017,6 +1254,7 @@ export default function App() {
                                   if (data.paperSize) setPaperSize(data.paperSize);
                                   if (data.printOrientation) setPrintOrientation(data.printOrientation);
                                   if (data.margins) setMargins(data.margins);
+                                  if (data.watermark !== undefined) setWatermark(data.watermark);
                                   if (data.rowSpacing) setRowSpacing(data.rowSpacing);
                                   if (data.selectedTemplateId) setSelectedTemplateId(data.selectedTemplateId);
                                   setCurrentDocumentId(docItem.id);
@@ -1310,6 +1548,17 @@ export default function App() {
                         className={`flex-1 py-2 text-sm rounded border ${printOrientation === 'fix' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 hover:bg-green-100'}`}
                       >Fix (Tự động)</button>
                     </div>
+                  </div>
+                  <div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={watermark} 
+                        onChange={(e) => setWatermark(e.target.checked)}
+                        className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                      />
+                      <span className="text-sm text-gray-700">Đóng dấu chìm (Watermark) logo</span>
+                    </label>
                   </div>
                   <div>
                     <div className="flex justify-between items-center mb-1">
@@ -1655,16 +1904,40 @@ export default function App() {
 
           {/* Customer Section */}
           <div className="space-y-3">
-            <h2 className="font-semibold text-gray-700 border-b pb-2">Thông tin Khách hàng</h2>
+            <div className="flex justify-between items-center border-b pb-2">
+              <h2 className="font-semibold text-gray-700">Thông tin Khách hàng</h2>
+              <button 
+                onClick={saveCustomer}
+                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                title="Lưu thông tin khách hàng này vào danh bạ"
+              >
+                <Save size={14} /> Lưu vào danh bạ
+              </button>
+            </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Kính gửi (Tên khách hàng)</label>
               <input
                 type="text"
+                list="customer-list"
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCustomerName(val);
+                  const found = customers.find(c => c.name === val);
+                  if (found) {
+                    if (found.address) setCustomerAddress(found.address);
+                    if (found.representative) setCustomerRepresentative(found.representative);
+                    if (found.position) setCustomerPosition(found.position);
+                  }
+                }}
                 placeholder="Nhập tên khách hàng..."
                 className="w-full border rounded px-3 py-2 focus:ring-1 focus:ring-blue-500 outline-none mb-3"
               />
+              <datalist id="customer-list">
+                {customers.map(c => (
+                  <option key={c.id} value={c.name} />
+                ))}
+              </datalist>
               <div className="flex gap-3 mb-3">
                 <div className="flex-1">
                   <label className="block text-xs text-gray-500 mb-1">Người đại diện</label>
@@ -1792,7 +2065,15 @@ export default function App() {
           <div className="space-y-3">
             <div className="space-y-4">
               {items.map((item, index) => (
-                <div key={item.id} className="bg-gray-50 p-3 rounded border relative group">
+                <div 
+                  key={item.id} 
+                  className="bg-gray-50 p-3 rounded border relative group cursor-move"
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDrop={(e) => handleDrop(e, index)}
+                >
                   <button
                     onClick={() => handleRemoveItem(item.id)}
                     className="absolute -top-2 -right-2 bg-red-100 text-red-600 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-200 z-10"
@@ -1827,10 +2108,43 @@ export default function App() {
                     </div>
 
                     <div className="flex-1 flex flex-col justify-between">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing">
+                          <GripVertical size={16} />
+                        </div>
                         <span className="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-1 rounded">
                           #{index + 1}
                         </span>
+                        <div className="flex-1 flex justify-between items-center">
+                          <select 
+                            className="text-xs border rounded px-1 py-0.5 text-gray-600 bg-gray-50 outline-none max-w-[150px]"
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (!val) return;
+                              const found = products.find(p => p.id === val);
+                              if (found) {
+                                handleItemChange(item.id, 'name', found.name);
+                                if (found.unit) handleItemChange(item.id, 'unit', found.unit);
+                                if (found.price) handleItemChange(item.id, 'price', found.price);
+                              }
+                              e.target.value = ""; // reset
+                            }}
+                          >
+                            <option value="">-- Chọn từ danh mục --</option>
+                            {products.map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                          <button 
+                            onClick={() => saveProduct(item)}
+                            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                            title="Lưu sản phẩm này vào danh mục"
+                          >
+                            <Save size={12} /> Lưu SP
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
                         <textarea
                           value={item.name}
                           onChange={(e) => handleItemChange(item.id, 'name', e.target.value)}
@@ -1958,6 +2272,14 @@ export default function App() {
             </div>
             <div className="flex gap-2">
               <button
+                onClick={handleSendEmail}
+                className="p-2 hover:bg-blue-700 rounded transition-colors flex items-center gap-1 bg-blue-600 border border-blue-500 text-white shadow-sm"
+                title="Gửi Email"
+              >
+                <Mail size={18} />
+                <span className="hidden sm:inline text-sm font-medium">Gửi Email</span>
+              </button>
+              <button
                 onClick={handleDownloadExcel}
                 className="p-2 hover:bg-green-700 rounded transition-colors flex items-center gap-1 bg-green-600 border border-green-500 text-white shadow-sm"
                 title="Tải file Excel"
@@ -2012,6 +2334,7 @@ export default function App() {
           id="print-area" 
           contentEditable={isEditMode}
           suppressContentEditableWarning={true}
+          className="relative"
           style={{ 
             transform: `scale(${printScale / 100})`, 
             transformOrigin: 'top center',
@@ -2021,21 +2344,29 @@ export default function App() {
             fontFamily: fontFamily
           }}
         >
-          <SelectedTemplate 
-            data={quotationData} 
-            onReorder={(newItems) => setItems(newItems)}
-            onRowSpacingChange={(spacing) => setRowSpacing(spacing)}
-            onMarginsChange={(newMargins) => setMargins(newMargins)}
-            onSectionOrderChange={(newOrder) => setSectionOrder(newOrder)}
-            onSectionSpacingChange={(spacing) => setSectionSpacing(spacing)}
-            onSectionColumnsChange={(sectionId, columns) => setSectionColumns({ ...sectionColumns, [sectionId]: columns })}
-            onLayoutChange={(newLayout) => setLayout(newLayout)}
-            onComponentSettingsChange={(settings) => setComponentSettings(settings)}
-            onColumnWidthsChange={(widths) => setColumnWidths(widths)}
-            onQuoteDateChange={(date) => setQuoteDate(date)}
-            activeRowId={activeRowId}
-            onActiveRowChange={setActiveRowId}
-          />
+          {watermark && businessInfo.logo && (
+            <div 
+              className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-[0.05] z-0"
+              style={{ backgroundImage: `url(${businessInfo.logo})`, backgroundRepeat: 'space', backgroundSize: '300px', backgroundPosition: 'center' }}
+            />
+          )}
+          <div className="relative z-10">
+            <SelectedTemplate 
+              data={quotationData} 
+              onReorder={(newItems) => setItems(newItems)}
+              onRowSpacingChange={(spacing) => setRowSpacing(spacing)}
+              onMarginsChange={(newMargins) => setMargins(newMargins)}
+              onSectionOrderChange={(newOrder) => setSectionOrder(newOrder)}
+              onSectionSpacingChange={(spacing) => setSectionSpacing(spacing)}
+              onSectionColumnsChange={(sectionId, columns) => setSectionColumns({ ...sectionColumns, [sectionId]: columns })}
+              onLayoutChange={(newLayout) => setLayout(newLayout)}
+              onComponentSettingsChange={(settings) => setComponentSettings(settings)}
+              onColumnWidthsChange={(widths) => setColumnWidths(widths)}
+              onQuoteDateChange={(date) => setQuoteDate(date)}
+              activeRowId={activeRowId}
+              onActiveRowChange={setActiveRowId}
+            />
+          </div>
         </div>
 
           {/* Global Settings Panel */}
